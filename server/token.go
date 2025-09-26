@@ -48,8 +48,9 @@ type tailscaleClaims struct {
 	Tailnet    string                    `json:"tailnet"`         // tailnet (like tail-scale.ts.net)
 
 	// Email is the "emailish" value with an '@' sign. It might not be a valid email.
-	Email  string         `json:"email,omitempty"` // user emailish (like "alice@github" or "bob@example.com")
-	UserID tailcfg.UserID `json:"uid,omitempty"`
+	Email         string         `json:"email,omitempty"` // user emailish (like "alice@github" or "bob@example.com")
+	EmailVerified bool           `json:"email_verified,omitempty"`
+	UserID        tailcfg.UserID `json:"uid,omitempty"`
 
 	// PreferredUsername is the local part of Email (without '@' and domain).
 	PreferredUsername string `json:"preferred_username,omitempty"`
@@ -564,6 +565,7 @@ func (s *IDPServer) issueTokens(w http.ResponseWriter, r *http.Request, ar *Auth
 		switch scope {
 		case "email":
 			tsClaims.Email = who.UserProfile.LoginName
+			tsClaims.EmailVerified = true
 		case "profile":
 			if username, _, ok := strings.Cut(who.UserProfile.LoginName, "@"); ok {
 				tsClaims.PreferredUsername = username
@@ -859,6 +861,7 @@ func (s *IDPServer) serveIntrospect(w http.ResponseWriter, r *http.Request) {
 				case "email":
 					if ar.RemoteUser.UserProfile != nil {
 						resp["email"] = ar.RemoteUser.UserProfile.LoginName
+						resp["email_verified"] = true
 					}
 				}
 			}

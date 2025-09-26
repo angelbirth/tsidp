@@ -189,6 +189,7 @@ func TestExtraUserInfo(t *testing.T) {
 			tt.expected["sub"] = remoteUser.Node.User.String()
 			tt.expected["name"] = profile.DisplayName
 			tt.expected["email"] = profile.LoginName
+			tt.expected["email_verified"] = true
 			tt.expected["picture"] = profile.ProfilePicURL
 			tt.expected["username"], _, _ = strings.Cut(profile.LoginName, "@")
 

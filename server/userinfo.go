@@ -17,11 +17,12 @@ import (
 // userInfo represents the OpenID Connect UserInfo response
 // Migrated from legacy/tsidp.go:771-777
 type userInfo struct {
-	Sub      string `json:"sub"`
-	Name     string `json:"name,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Picture  string `json:"picture,omitempty"`
-	Username string `json:"username,omitempty"`
+	Sub           string `json:"sub"`
+	Name          string `json:"name,omitempty"`
+	Email         string `json:"email,omitempty"`
+	EmailVerified bool   `json:"email_verified,omitempty"`
+	Picture       string `json:"picture,omitempty"`
+	Username      string `json:"username,omitempty"`
 }
 
 // toMap converts userInfo to a map[string]any, using JSON struct tag names
@@ -38,6 +39,9 @@ func (ui userInfo) toMap() map[string]any {
 	}
 	if ui.Email != "" {
 		m["email"] = ui.Email
+	}
+	if ui.EmailVerified {
+		m["email_verified"] = ui.EmailVerified
 	}
 	if ui.Picture != "" {
 		m["picture"] = ui.Picture
@@ -91,6 +95,7 @@ func (s *IDPServer) serveUserInfo(w http.ResponseWriter, r *http.Request) {
 	ui.Name = ar.RemoteUser.UserProfile.DisplayName
 	ui.Picture = ar.RemoteUser.UserProfile.ProfilePicURL
 	ui.Email = ar.RemoteUser.UserProfile.LoginName
+	ui.EmailVerified = true
 	if username, _, ok := strings.Cut(ar.RemoteUser.UserProfile.LoginName, "@"); ok {
 		ui.Username = username
 	}
