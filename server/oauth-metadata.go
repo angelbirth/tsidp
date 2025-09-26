@@ -57,7 +57,7 @@ type oauthAuthorizationServerMetadata struct {
 var (
 	openIDSupportedClaims = views.SliceOf([]string{
 		// Standard claims, these correspond to fields in jwt.Claims.
-		"sub", "aud", "exp", "iat", "iss", "jti", "nbf", "username", "email",
+		"sub", "aud", "exp", "iat", "iss", "jti", "nbf", "username", "email", "email_verified",
 
 		// Tailscale claims, these correspond to fields in tailscaleClaims.
 		"key", "addresses", "nid", "node", "tailnet", "tags", "user", "uid",

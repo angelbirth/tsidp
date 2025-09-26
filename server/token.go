@@ -111,6 +111,7 @@ func (tc tailscaleClaims) toMap() map[string]any {
 	}
 	if tc.Email != "" {
 		m["email"] = tc.Email
+		m["email_verified"] = tc.EmailVerified
 	}
 	if tc.UserID != 0 {
 		m["uid"] = tc.UserID
