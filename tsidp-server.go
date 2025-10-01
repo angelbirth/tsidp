@@ -44,6 +44,7 @@ var (
 	flagHostname           = flag.String("hostname", "idp", "tsnet hostname to use instead of idp")
 	flagDir                = flag.String("dir", "", "tsnet state directory; a default one will be created if not provided")
 	flagEnableSTS          = flag.Bool("enable-sts", false, "enable OIDC STS token exchange support")
+	flagEnableSAML         = flag.Bool("experimental-enable-saml", false, "enable experimental SAML 2.0 IdP support")
 
 	// application logging levels
 	flagLogLevel = flag.String("log", "info", "log levels: debug, info, warn, error")
@@ -173,6 +174,7 @@ func main() {
 		*flagFunnel,
 		*flagUseLocalTailscaled,
 		*flagEnableSTS,
+		*flagEnableSAML,
 	)
 
 	srv.SetServerURL(strings.TrimSuffix(st.Self.DNSName, "."), *flagPort)

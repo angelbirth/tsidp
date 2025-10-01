@@ -49,6 +49,7 @@ type IDPServer struct {
 	funnel      bool
 	localTSMode bool // use local tailscaled instead of tsnet
 	enableSTS   bool
+	enableSAML  bool
 
 	lazyMux        lazy.SyncValue[*http.ServeMux]
 	lazySigningKey lazy.SyncValue[*signingKey]
@@ -159,13 +160,14 @@ const (
 )
 
 // New creates a new IDPServer instance
-func New(lc *local.Client, stateDir string, funnel, localTSMode, enableSTS bool) *IDPServer {
+func New(lc *local.Client, stateDir string, funnel, localTSMode, enableSTS, enableSAML bool) *IDPServer {
 	return &IDPServer{
 		lc:            lc,
 		stateDir:      stateDir,
 		funnel:        funnel,
 		localTSMode:   localTSMode,
 		enableSTS:     enableSTS,
+		enableSAML:    enableSAML,
 		code:          make(map[string]*AuthRequest),
 		accessToken:   make(map[string]*AuthRequest),
 		refreshToken:  make(map[string]*AuthRequest),
@@ -260,6 +262,12 @@ func (s *IDPServer) newMux() *http.ServeMux {
 
 	// Register /register endpoint for Dynamic Client Registration
 	mux.HandleFunc("/register", s.addGrantAccessContext(s.serveDynamicClientRegistration))
+
+	// Register SAML endpoints (only if enabled)
+	if s.enableSAML {
+		mux.HandleFunc("/saml/metadata", s.serveSAMLMetadata)
+		mux.HandleFunc("/saml/sso", s.serveSAMLSSO)
+	}
 
 	// Register UI handler - must be last as it handles "/"
 	// Migrated from legacy/tsidp.go:685
