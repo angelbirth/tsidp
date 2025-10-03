@@ -55,11 +55,13 @@ type IDPServer struct {
 	lazySigningKey lazy.SyncValue[*signingKey]
 	lazySigner     lazy.SyncValue[jose.Signer]
 
-	mu            sync.Mutex               // guards the fields below
-	code          map[string]*AuthRequest  // keyed by random hex
-	accessToken   map[string]*AuthRequest  // keyed by random hex
-	refreshToken  map[string]*AuthRequest  // keyed by random hex
-	funnelClients map[string]*FunnelClient // keyed by client ID
+	mu                        sync.Mutex                          // guards the fields below
+	code                      map[string]*AuthRequest             // keyed by random hex
+	accessToken               map[string]*AuthRequest             // keyed by random hex
+	refreshToken              map[string]*AuthRequest             // keyed by random hex
+	funnelClients             map[string]*FunnelClient            // keyed by client ID
+	samlServiceProviders      map[string]*SAMLServiceProvider     // keyed by Entity ID
+	disableSAMLSPVerification bool                                // disable SP verification (development only)
 
 	// for bypassing application capability checks for testing
 	// see issue #44
@@ -160,18 +162,20 @@ const (
 )
 
 // New creates a new IDPServer instance
-func New(lc *local.Client, stateDir string, funnel, localTSMode, enableSTS, enableSAML bool) *IDPServer {
+func New(lc *local.Client, stateDir string, funnel, localTSMode, enableSTS, enableSAML bool, disableSAMLSPVerification bool) *IDPServer {
 	return &IDPServer{
-		lc:            lc,
-		stateDir:      stateDir,
-		funnel:        funnel,
-		localTSMode:   localTSMode,
-		enableSTS:     enableSTS,
-		enableSAML:    enableSAML,
-		code:          make(map[string]*AuthRequest),
-		accessToken:   make(map[string]*AuthRequest),
-		refreshToken:  make(map[string]*AuthRequest),
-		funnelClients: make(map[string]*FunnelClient),
+		lc:                        lc,
+		stateDir:                  stateDir,
+		funnel:                    funnel,
+		localTSMode:               localTSMode,
+		enableSTS:                 enableSTS,
+		enableSAML:                enableSAML,
+		disableSAMLSPVerification: disableSAMLSPVerification,
+		code:                      make(map[string]*AuthRequest),
+		accessToken:               make(map[string]*AuthRequest),
+		refreshToken:              make(map[string]*AuthRequest),
+		funnelClients:             make(map[string]*FunnelClient),
+		samlServiceProviders:      make(map[string]*SAMLServiceProvider),
 	}
 }
 

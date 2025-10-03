@@ -1169,57 +1169,61 @@ func extractSAMLStatus(body string) string {
 
 ### Phase 1: Data Model & Storage
 
-- [ ] Add `SAMLServiceProvider` struct to `server/saml.go`
-- [ ] Implement `storeSAMLServiceProvidersLocked()` in `server/saml.go`
-- [ ] Implement `loadSAMLServiceProviders()` in `server/saml.go`
-- [ ] Add `samlServiceProviders map[string]*SAMLServiceProvider` to IDPServer
-- [ ] Add `disableSAMLSPVerification bool` to IDPServer
-- [ ] Add `-experimental-disable-saml-sp-verification` flag to `tsidp-server.go`
+- [x] Add `SAMLServiceProvider` struct to `server/saml.go`
+- [x] Implement `storeSAMLServiceProvidersLocked()` in `server/saml.go`
+- [x] Implement `loadSAMLServiceProviders()` in `server/saml.go`
+- [x] Add `samlServiceProviders map[string]*SAMLServiceProvider` to IDPServer
+- [x] Add `disableSAMLSPVerification bool` to IDPServer
+- [x] Add `-experimental-disable-saml-sp-verification` flag to `tsidp-server.go`
 - [ ] Update `scripts/docker/run.sh` to support `TSIDP_EXPERIMENTAL_DISABLE_SAML_SP_VERIFICATION` env var
 - [ ] Update `README.md` to document new flag and environment variable
-- [ ] Update `loadState()` to load SP registry on startup
-- [ ] Write unit tests for storage round-trip in `server/saml_test.go`
+- [x] Update server startup to load SP registry on startup
+- [x] Write unit tests for storage round-trip in `server/saml_test.go`
 
 ### Phase 2: Admin UI Templates
 
-- [ ] Create `server/ui-saml-list.html` template
-- [ ] Create `server/ui-saml-edit.html` template
-- [ ] Update `server/ui-header.html` to add SAML SPs navigation link
-- [ ] Add template parsing in `ui_saml.go`
+- [x] Create `server/ui-saml-list.html` template
+- [x] Create `server/ui-saml-edit.html` template
+- [x] Update `server/ui-header.html` to add SAML SPs navigation link
+- [x] Add template parsing in `ui_saml.go`
 
 ### Phase 3: Admin UI Handlers
 
-- [ ] Create `server/ui_saml.go`
-- [ ] Implement `samlSPDisplayData` struct
-- [ ] Implement `handleSAMLSPList()`
-- [ ] Implement `handleNewSAMLSP()` (GET and POST)
-- [ ] Implement `handleEditSAMLSP()` (GET, POST update, POST delete)
-- [ ] Implement validation helpers: `validateEntityID()` (with empty name check), `validateACSURL()`, `splitLines()`
-- [ ] Implement form rendering helpers
+- [x] Create `server/ui_saml.go`
+- [x] Implement `samlSPDisplayData` struct
+- [x] Implement `handleSAMLSPList()`
+- [x] Implement `handleNewSAMLSP()` (GET and POST)
+- [x] Implement `handleEditSAMLSP()` (GET, POST update, POST delete)
+- [x] Implement validation helpers: `validateEntityID()` (with empty name check), `validateACSURL()`, `splitLines()`
+- [x] Implement form rendering helpers
 
 ### Phase 4: Route Registration
 
-- [ ] Update `handleUI()` in `server/server.go` to route SAML SP requests
-- [ ] Add conditional routing based on `enableSAML` flag
+- [x] Update `handleUI()` in `server/ui.go` to route SAML SP requests
+- [x] Add conditional routing based on `enableSAML` flag
 - [ ] Test UI navigation between OAuth and SAML sections
 
 ### Phase 5: SSO Flow Integration
 
-- [ ] Update `serveSAMLSSO()` in `server/saml.go`:
-  - [ ] Add check for `disableSAMLSPVerification` flag
-  - [ ] Add SP Entity ID lookup
-  - [ ] Add ACS URL validation
-  - [ ] Add appropriate SAML error responses (use RequestDenied status)
-  - [ ] Add slog.Warn logging for all SP verification failures
-- [ ] Write integration tests for SSO validation in `server/saml_test.go`
-- [ ] Add test helper functions: `createTestAuthnRequest()`, `encodeAuthnRequest()`, `extractSAMLStatus()`
+- [x] Update `serveSAMLSSO()` in `server/saml.go`:
+  - [x] Add check for `disableSAMLSPVerification` flag
+  - [x] Add SP Entity ID lookup
+  - [x] Add ACS URL validation
+  - [x] Add appropriate SAML error responses (use RequestDenied status)
+  - [x] Add slog.Warn logging for all SP verification failures
+- [x] Write integration tests for SSO validation in `server/saml_test.go`
+- [x] Add test helper functions (inline in tests)
 
 ### Phase 6: Testing & Documentation
 
-- [ ] Write unit tests for validation functions
-- [ ] Write unit tests for storage
+- [x] Write unit tests for validation functions
+- [x] Write unit tests for storage
 - [ ] Write integration tests for UI handlers
-- [ ] Write integration tests for SSO validation
+- [x] Write integration tests for SSO validation
+- [x] Update verifier-saml to properly handle error responses in handleACS()
+  - [x] Parse SAML response status before showing success message
+  - [x] Display error status and message if not Success
+  - [x] Only show "Authentication Successful" for Success status
 - [ ] Manual testing with verifier-saml
 
 ## Success Criteria

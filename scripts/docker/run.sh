@@ -31,6 +31,10 @@ if [ -n "$TSIDP_EXPERIMENTAL_ENABLE_SAML" ]; then
     ARGS="$ARGS -experimental-enable-saml"
 fi
 
+if [ -n "$TSIDP_EXPERIMENTAL_DISABLE_SAML_SP_VERIFICATION" ]; then
+    ARGS="$ARGS -experimental-disable-saml-sp-verification"
+fi
+
 # logging control
 if [ -n "$TSIDP_LOG" ]; then
     case "$TSIDP_LOG" in

@@ -454,12 +454,26 @@ func (v *verifier) handleACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse the response to check status before showing success message
+	var response saml.Response
+	if err := xml.Unmarshal(samlResponseBytes, &response); err != nil {
+		http.Error(w, "Failed to parse SAML response", http.StatusBadRequest)
+		return
+	}
+
+	// Check if the response indicates success or error
+	successStatus := "urn:oasis:names:tc:SAML:2.0:status:Success"
+	isSuccess := response.Status.StatusCode.Value == successStatus
+
 	// Send response through channel
 	select {
 	case v.responseChan <- samlResponseBytes:
-		// Success page
+		// Display appropriate page based on status
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<!DOCTYPE html>
+
+		if isSuccess {
+			// Success page
+			fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
 	<meta charset="utf-8">
@@ -485,6 +499,44 @@ func (v *verifier) handleACS(w http.ResponseWriter, r *http.Request) {
 	</script>
 </body>
 </html>`)
+		} else {
+			// Error page
+			statusCode := response.Status.StatusCode.Value
+			statusMessage := ""
+			if response.Status.StatusMessage != nil {
+				statusMessage = response.Status.StatusMessage.Value
+			}
+
+			// Extract the last part of the status code URN for display
+			statusParts := strings.Split(statusCode, ":")
+			statusDisplay := statusCode
+			if len(statusParts) > 0 {
+				statusDisplay = statusParts[len(statusParts)-1]
+			}
+
+			fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>SAML Verification - Error</title>
+</head>
+<body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
+	<h1 style="color: red;">✗ Authentication Failed</h1>
+	<p style="color: #333; font-size: 18px; margin-top: 20px;">The Identity Provider returned an error.</p>
+	<div style="background-color: #fee; border: 1px solid #fcc; border-radius: 4px; padding: 20px; margin: 30px auto; max-width: 600px; text-align: left;">
+		<p style="margin: 0 0 10px 0;"><strong>Status:</strong> <code style="background-color: #fdd; padding: 2px 6px; border-radius: 3px;">%s</code></p>
+		%s
+	</div>
+	<p style="color: #666; margin-top: 30px;">The verifier will continue processing to show detailed error information...</p>
+	<button onclick="window.close()" style="margin-top: 20px; padding: 10px 20px; font-size: 16px; cursor: pointer; background-color: #d32f2f; color: white; border: none; border-radius: 4px;">Close Now</button>
+</body>
+</html>`, statusDisplay, func() string {
+				if statusMessage != "" {
+					return fmt.Sprintf(`<p style="margin: 10px 0 0 0;"><strong>Message:</strong> %s</p>`, statusMessage)
+				}
+				return ""
+			}())
+		}
 	default:
 		http.Error(w, "Response already received", http.StatusBadRequest)
 	}

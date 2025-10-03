@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>SAML Service Providers - Tailscale OIDC Identity Provider</title>
+    <link rel="stylesheet" type="text/css" href="/style.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+
+  <body>
+    {{template "header"}}
+
+    <main>
+      {{if .SAMLDisabled}}
+      <div class="alert alert-info">
+        <h3>SAML is currently disabled</h3>
+        <p>SAML support is not enabled on this IdP server.</p>
+        <p>To enable SAML, restart the server with the <code>-experimental-enable-saml</code> flag.</p>
+      </div>
+      {{else}}
+      <div class="header-actions">
+        <div>
+          <h2>SAML Service Providers</h2>
+          {{if .ServiceProviders}}
+            <p class="client-count">{{len .ServiceProviders}} SP{{if ne (len .ServiceProviders) 1}}s{{end}} registered</p>
+          {{end}}
+        </div>
+        <a href="/saml/sp/new" class="btn btn-primary">Register New SP</a>
+      </div>
+
+      {{if .ServiceProviders}}
+      <table>
+        <thead>
+          <tr>
+            <td>Name</td>
+            <td>Entity ID</td>
+            <td>ACS URLs</td>
+            <td>Actions</td>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .ServiceProviders}}
+          <tr>
+            <td>
+              {{if .Name}}
+                <strong>{{.Name}}</strong>
+              {{else}}
+                <span class="text-muted">Unnamed SP</span>
+              {{end}}
+            </td>
+            <td>
+              <code class="client-id">{{.EntityID}}</code>
+            </td>
+            <td>
+              {{if gt (len .ACSURLs) 1}}
+                <div class="redirect-uris">
+                  {{range .ACSURLs}}
+                    <span class="redirect-uri">{{.}}</span>
+                  {{end}}
+                </div>
+              {{else if eq (len .ACSURLs) 1}}
+                <span class="redirect-uri">{{index .ACSURLs 0}}</span>
+              {{else}}
+                <span class="text-muted">No ACS URLs</span>
+              {{end}}
+            </td>
+            <td>
+              <a href="/saml/sp/edit/{{.EntityID | urlquery}}" class="btn btn-secondary btn-small">Edit</a>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div class="empty-state">
+        <h3>No SAML service providers registered</h3>
+        <p>Register your first SAML service provider to enable SAML authentication.</p>
+        <a href="/saml/sp/new" class="btn btn-primary">Register New SP</a>
+      </div>
+      {{end}}
+      {{end}}
+    </main>
+  </body>
+</html>

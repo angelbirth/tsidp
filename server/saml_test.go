@@ -655,3 +655,264 @@ func TestSAML_ResponseStructure(t *testing.T) {
 		t.Error("assertion missing Signature")
 	}
 }
+
+// TestValidateEntityID tests Entity ID validation
+func TestValidateEntityID(t *testing.T) {
+	tests := []struct {
+		name     string
+		entityID string
+		wantErr  bool
+	}{
+		{"valid https URL", "https://app.example.com/saml", false},
+		{"valid http URL", "http://localhost:8080/saml", false},
+		{"valid URN", "urn:example:sp:1234", false},
+		{"missing scheme", "app.example.com/saml", true},
+		{"empty", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateEntityID(tt.entityID)
+			if (err != "") != tt.wantErr {
+				t.Errorf("validateEntityID() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestValidateACSURL tests ACS URL validation
+func TestValidateACSURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		acsURL  string
+		wantErr bool
+	}{
+		{"valid https URL", "https://app.example.com/saml/acs", false},
+		{"valid http URL", "http://localhost:8080/saml/acs", false},
+		{"missing scheme", "app.example.com/saml/acs", true},
+		{"invalid scheme", "ftp://app.example.com/saml/acs", true},
+		{"missing host", "http:///path", true},
+		{"empty", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateACSURL(tt.acsURL)
+			if (err != "") != tt.wantErr {
+				t.Errorf("validateACSURL() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestSAMLSPStorageRoundTrip tests storing and loading SP registry
+func TestSAMLSPStorageRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create test SPs
+	sps := map[string]*SAMLServiceProvider{
+		"https://sp1.example.com/saml": {
+			EntityID: "https://sp1.example.com/saml",
+			Name:     "SP 1",
+			ACSURLs:  []string{"https://sp1.example.com/acs"},
+		},
+		"https://sp2.example.com/saml": {
+			EntityID: "https://sp2.example.com/saml",
+			Name:     "SP 2",
+			ACSURLs: []string{
+				"https://sp2.example.com/acs",
+				"https://sp2.example.com/acs/backup",
+			},
+		},
+	}
+
+	// Create mock server and store
+	srv := &IDPServer{
+		stateDir:             tmpDir,
+		samlServiceProviders: sps,
+	}
+
+	srv.mu.Lock()
+	err := srv.storeSAMLServiceProvidersLocked()
+	srv.mu.Unlock()
+	if err != nil {
+		t.Fatalf("storeSAMLServiceProvidersLocked() failed: %v", err)
+	}
+
+	// Load and compare
+	loadedSPs, err := loadSAMLServiceProviders(tmpDir)
+	if err != nil {
+		t.Fatalf("loadSAMLServiceProviders() failed: %v", err)
+	}
+
+	if len(loadedSPs) != len(sps) {
+		t.Errorf("loaded %d SPs, want %d", len(loadedSPs), len(sps))
+	}
+
+	for entityID, sp := range sps {
+		loaded, ok := loadedSPs[entityID]
+		if !ok {
+			t.Errorf("SP %s not loaded", entityID)
+			continue
+		}
+		if loaded.Name != sp.Name {
+			t.Errorf("SP %s: name = %s, want %s", entityID, loaded.Name, sp.Name)
+		}
+		if len(loaded.ACSURLs) != len(sp.ACSURLs) {
+			t.Errorf("SP %s: ACS URLs count mismatch", entityID)
+			continue
+		}
+		for i, url := range sp.ACSURLs {
+			if loaded.ACSURLs[i] != url {
+				t.Errorf("SP %s: ACS URL[%d] = %s, want %s", entityID, i, loaded.ACSURLs[i], url)
+			}
+		}
+	}
+}
+
+// TestSAMLSPStorageEmpty tests loading when no file exists
+func TestSAMLSPStorageEmpty(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	loadedSPs, err := loadSAMLServiceProviders(tmpDir)
+	if err != nil {
+		t.Fatalf("loadSAMLServiceProviders() should not error on missing file: %v", err)
+	}
+
+	if len(loadedSPs) != 0 {
+		t.Errorf("loaded %d SPs, want 0 for empty dir", len(loadedSPs))
+	}
+}
+
+// TestSAMLSSOWithSPVerification tests SP verification during SSO
+func TestSAMLSSOWithSPVerification(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create a test SP
+	registeredEntityID := "http://localhost:58080/saml"
+	registeredACSURL := "http://localhost:58080/saml/acs"
+
+	s := &IDPServer{
+		serverURL:                 "https://idp.test.ts.net",
+		stateDir:                  tmpDir,
+		hostname:                  "idp.test.ts.net",
+		enableSAML:                true,
+		disableSAMLSPVerification: false,
+		samlServiceProviders: map[string]*SAMLServiceProvider{
+			registeredEntityID: {
+				EntityID: registeredEntityID,
+				Name:     "Test SP",
+				ACSURLs:  []string{registeredACSURL},
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		entityID   string
+		acsURL     string
+		wantStatus string
+	}{
+		{
+			name:       "registered SP with valid ACS",
+			entityID:   registeredEntityID,
+			acsURL:     registeredACSURL,
+			wantStatus: "missing SAMLRequest", // Will fail on missing request but pass SP validation
+		},
+		{
+			name:       "unregistered SP",
+			entityID:   "http://unknown-sp.example.com/saml",
+			acsURL:     "http://unknown-sp.example.com/acs",
+			wantStatus: "Service Provider not registered",
+		},
+		{
+			name:       "registered SP with invalid ACS",
+			entityID:   registeredEntityID,
+			acsURL:     "http://attacker.com/acs",
+			wantStatus: "AssertionConsumerServiceURL not registered",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a valid AuthnRequest
+			authnRequest := `<?xml version="1.0"?>
+<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+    ID="id-test-request-123"
+    Version="2.0"
+    IssueInstant="2024-01-01T00:00:00Z"
+    Destination="https://idp.test.ts.net/saml/sso"
+    AssertionConsumerServiceURL="` + tt.acsURL + `"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+    <saml:Issuer>` + tt.entityID + `</saml:Issuer>
+</samlp:AuthnRequest>`
+
+			// Compress and encode the request
+			var buf strings.Builder
+			writer, _ := flate.NewWriter(&buf, flate.DefaultCompression)
+			writer.Write([]byte(authnRequest))
+			writer.Close()
+			encoded := base64.StdEncoding.EncodeToString([]byte(buf.String()))
+
+			req := httptest.NewRequest(http.MethodGet, "/saml/sso?SAMLRequest="+encoded, nil)
+			rr := httptest.NewRecorder()
+
+			s.serveSAMLSSO(rr, req)
+
+			body := rr.Body.String()
+			if !strings.Contains(body, tt.wantStatus) {
+				t.Errorf("response body should contain %q, got: %s", tt.wantStatus, body)
+			}
+		})
+	}
+}
+
+// TestSAMLSSOWithVerificationDisabled tests that verification can be bypassed
+func TestSAMLSSOWithVerificationDisabled(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	s := &IDPServer{
+		serverURL:                 "https://idp.test.ts.net",
+		stateDir:                  tmpDir,
+		hostname:                  "idp.test.ts.net",
+		enableSAML:                true,
+		disableSAMLSPVerification: true,
+		samlServiceProviders:      map[string]*SAMLServiceProvider{},
+	}
+
+	// Use an unregistered SP
+	entityID := "http://unregistered-sp.example.com/saml"
+	acsURL := "http://unregistered-sp.example.com/acs"
+
+	authnRequest := `<?xml version="1.0"?>
+<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+    xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+    ID="id-test-request-123"
+    Version="2.0"
+    IssueInstant="2024-01-01T00:00:00Z"
+    Destination="https://idp.test.ts.net/saml/sso"
+    AssertionConsumerServiceURL="` + acsURL + `"
+    ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST">
+    <saml:Issuer>` + entityID + `</saml:Issuer>
+</samlp:AuthnRequest>`
+
+	var buf strings.Builder
+	writer, _ := flate.NewWriter(&buf, flate.DefaultCompression)
+	writer.Write([]byte(authnRequest))
+	writer.Close()
+	encoded := base64.StdEncoding.EncodeToString([]byte(buf.String()))
+
+	req := httptest.NewRequest(http.MethodGet, "/saml/sso?SAMLRequest="+encoded, nil)
+	rr := httptest.NewRecorder()
+
+	s.serveSAMLSSO(rr, req)
+
+	body := rr.Body.String()
+	// Should NOT contain SP not registered error
+	if strings.Contains(body, "Service Provider not registered") {
+		t.Error("verification should be disabled but SP was rejected")
+	}
+	// Should fail on WhoIs instead (since we're not on tailnet)
+	// But should not fail on SP verification
+}

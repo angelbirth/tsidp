@@ -138,19 +138,20 @@ $ TAILSCALE_USE_WIP_CODE=1 TS_AUTHKEY={YOUR_TAILSCALE_AUTHKEY} TSNET_FORCE_LOGIN
 
 The `tsidp-server` is configured by several command-line flags:
 
-| Flag                        | Description                                                                                        | Default  |
-| --------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
-| `-dir <path>`               | Directory path to save tsnet and tsidp state. Recommend to be set.                                 | `""`     |
-| `-hostname <hostname>`      | hostname on tailnet. Will become `<hostname>.your-tailnet.ts.net`                                  | `idp`    |
-| `-port <port>`              | Port to listen on                                                                                  | `443`    |
-| `-local-port <port>`        | Listen on `localhost:<port>`. Useful for testing                                                   | disabled |
-| `-use-local-tailscaled`     | Use local tailscaled instead of tsnet                                                              | `false`  |
-| `-funnel`                   | Use Tailscale Funnel to make tsidp available on the public internet so it works with SaaS products | disabled |
-| `-enable-sts`               | Enable OAuth token exchange using RFC 8693                                                         | disabled |
-| `-experimental-enable-saml` | Enable SAML endpoints                                                                              | false    |
-| `-log <level>`              | Set logging level: `debug`, `info`, `warn`, `error`                                                | `info`   |
-| `-debug-all-requests`       | For development. Prints all requests and responses                                                 | disabled |
-| `-debug-tsnet`              | For development. Enables debug level logging with tsnet connection                                 | disabled |
+| Flag                                              | Description                                                                                        | Default  |
+| ------------------------------------------------- | -------------------------------------------------------------------------------------------------- | -------- |
+| `-dir <path>`                                     | Directory path to save tsnet and tsidp state. Recommend to be set.                                 | `""`     |
+| `-hostname <hostname>`                            | hostname on tailnet. Will become `<hostname>.your-tailnet.ts.net`                                  | `idp`    |
+| `-port <port>`                                    | Port to listen on                                                                                  | `443`    |
+| `-local-port <port>`                              | Listen on `localhost:<port>`. Useful for testing                                                   | disabled |
+| `-use-local-tailscaled`                           | Use local tailscaled instead of tsnet                                                              | `false`  |
+| `-funnel`                                         | Use Tailscale Funnel to make tsidp available on the public internet so it works with SaaS products | disabled |
+| `-enable-sts`                                     | Enable OAuth token exchange using RFC 8693                                                         | disabled |
+| `-experimental-enable-saml`                       | Enable SAML endpoints                                                                              | false    |
+| `-experimental-disable-saml-sp-verification`      | **DEVELOPMENT ONLY**: Disable SAML SP verification. Not for production use.                        | false    |
+| `-log <level>`                                    | Set logging level: `debug`, `info`, `warn`, `error`                                                | `info`   |
+| `-debug-all-requests`                             | For development. Prints all requests and responses                                                 | disabled |
+| `-debug-tsnet`                                    | For development. Enables debug level logging with tsnet connection                                 | disabled |
 
 ### CLI Environment Variables
 
@@ -173,18 +174,19 @@ The Docker image exposes the CLI flags through environment variables. If omitted
 
 > [!NOTE] > `TS_STATE_DIR` and `TS_HOSTNAME` are legacy names. These will be replaced by `TSIDP_STATE_DIR` and `TSIDP_HOSTNAME` in the future.
 
-| Environment Variable                     | CLI flag                    |
-| ---------------------------------------- | --------------------------- |
-| `TS_STATE_DIR=<path>` _\*note prefix_    | `-dir <path>`               |
-| `TS_HOSTNAME=<hostname>` _\*note prefix_ | `-hostname <hostname>`      |
-| `TSIDP_PORT=<port>`                      | `-port <port>`              |
-| `TSIDP_LOCAL_PORT=<local-port>`          | `-local-port <local-port>`  |
-| `TSIDP_USE_FUNNEL=1`                     | `-funnel`                   |
-| `TSIDP_ENABLE_STS=1`                     | `-enable-sts`               |
-| `TSIDP_EXPERIMENTAL_ENABLE_SAML=1`       | `-experimental-enable-saml` |
-| `TSIDP_LOG=<level>`                      | `-log <level>`              |
-| `TSIDP_DEBUG_TSNET=1`                    | `-debug-tsnet`              |
-| `TSIDP_DEBUG_ALL_REQUESTS=1`             | `-debug-all-requests`       |
+| Environment Variable                                          | CLI flag                                         |
+| ------------------------------------------------------------- | ------------------------------------------------ |
+| `TS_STATE_DIR=<path>` _\*note prefix_                         | `-dir <path>`                                    |
+| `TS_HOSTNAME=<hostname>` _\*note prefix_                      | `-hostname <hostname>`                           |
+| `TSIDP_PORT=<port>`                                           | `-port <port>`                                   |
+| `TSIDP_LOCAL_PORT=<local-port>`                               | `-local-port <local-port>`                       |
+| `TSIDP_USE_FUNNEL=1`                                          | `-funnel`                                        |
+| `TSIDP_ENABLE_STS=1`                                          | `-enable-sts`                                    |
+| `TSIDP_EXPERIMENTAL_ENABLE_SAML=1`                            | `-experimental-enable-saml`                      |
+| `TSIDP_EXPERIMENTAL_DISABLE_SAML_SP_VERIFICATION=1`           | `-experimental-disable-saml-sp-verification`     |
+| `TSIDP_LOG=<level>`                                           | `-log <level>`                                   |
+| `TSIDP_DEBUG_TSNET=1`                                         | `-debug-tsnet`                                   |
+| `TSIDP_DEBUG_ALL_REQUESTS=1`                                  | `-debug-all-requests`                            |
 
 ## Application Configuration Guides (WIP)
 

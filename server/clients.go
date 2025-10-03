@@ -98,6 +98,25 @@ func (s *IDPServer) LoadFunnelClients() error {
 	return nil
 }
 
+// LoadSAMLServiceProviders loads SAML service providers from disk
+func (s *IDPServer) LoadSAMLServiceProviders() error {
+	if !s.enableSAML {
+		return nil
+	}
+
+	sps, err := loadSAMLServiceProviders(s.stateDir)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	s.samlServiceProviders = sps
+	s.mu.Unlock()
+
+	slog.Info("loaded SAML service providers", "count", len(sps))
+	return nil
+}
+
 // storeFunnelClientsLocked persists the funnel clients to disk
 // Caller must hold s.mu lock
 // Migrated from legacy/tsidp.go:2270-2276

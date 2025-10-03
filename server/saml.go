@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"encoding/xml"
 	"fmt"
@@ -30,6 +31,73 @@ import (
 	"github.com/crewjam/saml"
 	dsig "github.com/russellhaering/goxmldsig"
 )
+
+// SAMLServiceProvider represents a registered Service Provider
+type SAMLServiceProvider struct {
+	EntityID string   `json:"entity_id"` // Unique SP identifier
+	Name     string   `json:"name"`      // Display name for admin UI
+	ACSURLs  []string `json:"acs_urls"`  // Allowed ACS URLs
+}
+
+const samlServiceProvidersFile = "saml-service-providers.json"
+
+// storeSAMLServiceProvidersLocked persists the SP registry to disk
+// Must be called with s.mu held
+func (s *IDPServer) storeSAMLServiceProvidersLocked() error {
+	if s.stateDir == "" {
+		return nil // No persistence in ephemeral mode
+	}
+
+	path := filepath.Join(s.stateDir, samlServiceProvidersFile)
+
+	// Convert map to array for storage
+	spArray := make([]*SAMLServiceProvider, 0, len(s.samlServiceProviders))
+	for _, sp := range s.samlServiceProviders {
+		spArray = append(spArray, sp)
+	}
+
+	data, err := json.MarshalIndent(spArray, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal SAML SPs: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write SAML SPs: %w", err)
+	}
+
+	return nil
+}
+
+// loadSAMLServiceProviders loads the SP registry from disk
+func loadSAMLServiceProviders(stateDir string) (map[string]*SAMLServiceProvider, error) {
+	sps := make(map[string]*SAMLServiceProvider)
+
+	if stateDir == "" {
+		return sps, nil // No persistence in ephemeral mode
+	}
+
+	path := filepath.Join(stateDir, samlServiceProvidersFile)
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return sps, nil // Fresh install, no SPs registered yet
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read SAML SPs: %w", err)
+	}
+
+	// Unmarshal from array
+	var spArray []*SAMLServiceProvider
+	if err := json.Unmarshal(data, &spArray); err != nil {
+		return nil, fmt.Errorf("unmarshal SAML SPs: %w", err)
+	}
+
+	// Convert array to map keyed by EntityID
+	for _, sp := range spArray {
+		sps[sp.EntityID] = sp
+	}
+
+	return sps, nil
+}
 
 // generateSAMLID generates a random ID for SAML entities
 func generateSAMLID() string {
@@ -192,7 +260,7 @@ func (s *IDPServer) serveSAMLSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract SP Entity ID from AuthnRequest (no verification required)
+	// Extract SP Entity ID from AuthnRequest
 	var spEntityID string
 	if authnRequest.Issuer != nil {
 		spEntityID = authnRequest.Issuer.Value
@@ -203,6 +271,56 @@ func (s *IDPServer) serveSAMLSSO(w http.ResponseWriter, r *http.Request) {
 			"urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
 			"missing issuer")
 		return
+	}
+
+	// SP verification (can be disabled for development)
+	if !s.disableSAMLSPVerification {
+		// Lookup SP in registry
+		s.mu.Lock()
+		sp, registered := s.samlServiceProviders[spEntityID]
+		s.mu.Unlock()
+
+		if !registered {
+			slog.Warn("SAML SSO: unregistered SP attempted authentication",
+				"entity_id", spEntityID,
+				"remote_addr", r.RemoteAddr)
+			s.sendSAMLError(w, r, authnRequest.AssertionConsumerServiceURL,
+				authnRequest.ID, relayState,
+				"urn:oasis:names:tc:SAML:2.0:status:Responder",
+				"urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+				"Service Provider not registered")
+			return
+		}
+
+		// Validate ACS URL matches registered URLs
+		acsURL := authnRequest.AssertionConsumerServiceURL
+		validACS := false
+		for _, registeredACS := range sp.ACSURLs {
+			if acsURL == registeredACS {
+				validACS = true
+				break
+			}
+		}
+
+		if !validACS {
+			slog.Warn("SAML SSO: ACS URL mismatch",
+				"entity_id", spEntityID,
+				"requested_acs", acsURL,
+				"registered_acs", sp.ACSURLs,
+				"remote_addr", r.RemoteAddr)
+			s.sendSAMLError(w, r, acsURL, authnRequest.ID, relayState,
+				"urn:oasis:names:tc:SAML:2.0:status:Responder",
+				"urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+				"AssertionConsumerServiceURL not registered for this SP")
+			return
+		}
+
+		slog.Info("SAML SSO: validated SP",
+			"entity_id", spEntityID,
+			"sp_name", sp.Name,
+			"acs_url", acsURL)
+	} else {
+		slog.Warn("SAML SSO: SP verification disabled (development mode)")
 	}
 
 	// Identify user via Tailscale WhoIs

@@ -41,10 +41,11 @@ var (
 	flagLocalPort          = flag.Int("local-port", -1, "allow requests from localhost")
 	flagUseLocalTailscaled = flag.Bool("use-local-tailscaled", false, "use local tailscaled instead of tsnet")
 	flagFunnel             = flag.Bool("funnel", false, "use Tailscale Funnel to make tsidp available on the public internet")
-	flagHostname           = flag.String("hostname", "idp", "tsnet hostname to use instead of idp")
-	flagDir                = flag.String("dir", "", "tsnet state directory; a default one will be created if not provided")
-	flagEnableSTS          = flag.Bool("enable-sts", false, "enable OIDC STS token exchange support")
-	flagEnableSAML         = flag.Bool("experimental-enable-saml", false, "enable experimental SAML 2.0 IdP support")
+	flagHostname                        = flag.String("hostname", "idp", "tsnet hostname to use instead of idp")
+	flagDir                             = flag.String("dir", "", "tsnet state directory; a default one will be created if not provided")
+	flagEnableSTS                       = flag.Bool("enable-sts", false, "enable OIDC STS token exchange support")
+	flagEnableSAML                      = flag.Bool("experimental-enable-saml", false, "enable experimental SAML 2.0 IdP support")
+	flagDisableSAMLSPVerification       = flag.Bool("experimental-disable-saml-sp-verification", false, "disable SAML SP verification (development only)")
 
 	// application logging levels
 	flagLogLevel = flag.String("log", "info", "log levels: debug, info, warn, error")
@@ -172,6 +173,10 @@ func main() {
 		slog.Warn("Experimental SAML support enabled")
 	}
 
+	if *flagDisableSAMLSPVerification {
+		slog.Warn("SAML SP verification disabled (development only)")
+	}
+
 	srv := server.New(
 		lc,
 		*flagDir,
@@ -179,6 +184,7 @@ func main() {
 		*flagUseLocalTailscaled,
 		*flagEnableSTS,
 		*flagEnableSAML,
+		*flagDisableSAMLSPVerification,
 	)
 
 	srv.SetServerURL(strings.TrimSuffix(st.Self.DNSName, "."), *flagPort)
@@ -187,6 +193,12 @@ func main() {
 	// This ensures OIDC clients persist across restarts
 	if err := srv.LoadFunnelClients(); err != nil {
 		slog.Error("could not load funnel clients", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	// Load SAML service providers from disk
+	if err := srv.LoadSAMLServiceProviders(); err != nil {
+		slog.Error("could not load SAML service providers", slog.Any("error", err))
 		os.Exit(1)
 	}
 

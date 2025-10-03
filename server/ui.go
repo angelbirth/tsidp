@@ -69,10 +69,21 @@ func (s *IDPServer) handleUI(w http.ResponseWriter, r *http.Request) {
 	case "/style.css":
 		http.ServeContent(w, r, "ui-style.css", processStart, strings.NewReader(styleCSS))
 		return
+	case "/saml/sp":
+		s.handleSAMLSPList(w, r)
+		return
+	case "/saml/sp/new":
+		s.handleNewSAMLSP(w, r)
+		return
 	}
 
 	if strings.HasPrefix(r.URL.Path, "/edit/") {
 		s.handleEditClient(w, r)
+		return
+	}
+
+	if strings.HasPrefix(r.URL.Path, "/saml/sp/edit/") {
+		s.handleEditSAMLSP(w, r)
 		return
 	}
 
