@@ -6,6 +6,53 @@ tsidp (Tailscale IDP) is unique among identity providers - it leverages Tailscal
 
 This document specifies how to add SAML 2.0 IdP support to tsidp, parallel to the existing OIDC implementation.
 
+## SAML Authentication Flow Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as User Browser
+    participant SP as Service Provider
+    participant IdP as tsidp (IdP)
+    participant TS as Tailscale API
+
+    Note over SP,IdP: Initial SP Setup
+    SP->>IdP: GET /saml/metadata
+    IdP->>SP: SAML Metadata (EntityDescriptor with signing cert)
+
+    Note over User,IdP: SaaS Authentication Flow Begins
+    User->>SP: Access protected resource
+    SP->>SP: Generate AuthnRequest
+    SP->>User: HTTP Redirect to IdP SSO URL<br/>(SAMLRequest + RelayState)
+
+    User->>IdP: GET /saml/sso?SAMLRequest=...&RelayState=...
+
+    Note over IdP,TS: Identity Resolution via Tailscale
+    IdP->>IdP: Check if Funnel request (block if true)
+    IdP->>IdP: Decode & validate AuthnRequest
+    IdP->>IdP: Extract SP Entity ID from Issuer
+    IdP->>TS: WhoIs(RemoteAddr)
+    TS-->>IdP: User identity (LoginName, etc.)
+
+    Note over IdP: Generate & Sign Response
+    IdP->>IdP: Create Assertion with:<br/>- Subject: LoginName<br/>- Attributes: email<br/>- Audience: SP Entity ID
+    IdP->>IdP: Sign Assertion (RSA-SHA256)
+    IdP->>IdP: Create Response with signed Assertion
+    IdP->>IdP: Sign Response (RSA-SHA256)
+
+    IdP->>User: Send HTTP-POST form that auto-submits to SP's ACS URL
+    User->>SP: (auto) POST /saml/acs
+
+    Note over SP: Validate Response
+    SP->>SP: Verify Response signature
+    SP->>SP: Verify Assertion signature
+    SP->>SP: Validate Audience restriction
+    SP->>SP: Check time conditions (NotBefore/NotOnOrAfter)
+    SP->>SP: Extract attributes (email)
+
+    SP->>User: Grant access + redirect to original resource
+```
+
 ## Architecture & Design
 
 ### Code Organization

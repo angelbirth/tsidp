@@ -151,11 +151,12 @@ func (s *IDPServer) serveSAMLSSO(w http.ResponseWriter, r *http.Request) {
 	var samlRequestParam string
 	var relayState string
 
-	if r.Method == http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
 		// HTTP-Redirect binding
 		samlRequestParam = r.URL.Query().Get("SAMLRequest")
 		relayState = r.URL.Query().Get("RelayState")
-	} else if r.Method == http.MethodPost {
+	case http.MethodPost:
 		// HTTP-POST binding
 		if err := r.ParseForm(); err != nil {
 			writeHTTPError(w, r, http.StatusBadRequest, ecInvalidRequest, "failed to parse form", err)
@@ -163,7 +164,7 @@ func (s *IDPServer) serveSAMLSSO(w http.ResponseWriter, r *http.Request) {
 		}
 		samlRequestParam = r.FormValue("SAMLRequest")
 		relayState = r.FormValue("RelayState")
-	} else {
+	default:
 		writeHTTPError(w, r, http.StatusMethodNotAllowed, ecInvalidRequest, "method not allowed", nil)
 		return
 	}
