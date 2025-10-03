@@ -22,7 +22,10 @@ This follows the same architectural pattern as OAuth client management (see `ser
 - `storeSAMLServiceProvidersLocked()` - Persist registry to disk
 - `loadSAMLServiceProviders()` - Load registry on startup
 - SP lookup and validation helpers
-- include tests in saml_test.go
+- Include tests in saml_test.go
+- Modify `serveSAMLSSO()` to validate SP Entity ID and ACS URL
+- Return appropriate SAML error responses for unauthorized SPs
+- Use slog.Warn to log all SP verification failures
 
 **server/ui_saml.go** - Admin UI handlers for SAML SP management
 
@@ -44,12 +47,13 @@ This follows the same architectural pattern as OAuth client management (see `ser
 **server/server.go** - IDPServer struct updates
 
 - Add `samlServiceProviders map[string]*SAMLServiceProvider` field
+- Add `disableSAMLSPVerification bool` field
 - Load registry in existing `loadState()` function
 
-**server/saml.go** - SSO handler updates
+**tsidp-server.go** - main entry point
 
-- Modify `serveSAMLSSO()` to validate SP Entity ID and ACS URL
-- Return appropriate SAML error responses for unauthorized SPs
+- Add a new flag: `-experimental-disable-saml-sp-verification`, note: only for development
+- Pass flag value to IDPServer configuration
 
 ### Data Model
 
@@ -66,37 +70,47 @@ type SAMLServiceProvider struct {
 
 Example JSON structure:
 
+- The data is serialized as an array of objects
+- In the go source it is a map keyed by the EntityID
+
 ```json
-{
-  "https://app.example.com/saml": {
+[
+  {
     "EntityID": "https://app.example.com/saml",
-    "Name": "Example App",
+    "Name": "Example App #1",
     "ACSURLs": ["https://app.example.com/saml/acs", "https://app.example.com/saml/acs/callback"]
+  },
+  {
+    "EntityID": "https://app.example2.com/saml",
+    "Name": "Example App #2",
+    "ACSURLs": ["https://app.example2.com/saml/acs", "https://app.example2.com/saml/acs/callback"]
   }
-}
+]
 ```
 
 ### Integration with Existing tsidp
 
 **UI Integration**:
 
-1. Add "SAML SPs" navigation link to admin UI header template
+1. Add "SAML SPs" navigation link to admin UI header template (always visible)
 2. Mount handlers on existing UI routes:
-   - `/saml/sp` - List SPs
-   - `/saml/sp/new` - Create new SP
-   - `/saml/sp/edit/{entityID}` - Edit/delete SP
+   - `/saml/sp` - List SPs (always accessible; shows disabled message if `enableSAML` is false)
+   - `/saml/sp/new` - Create new SP (returns 404 if `enableSAML` is false)
+   - `/saml/sp/edit/{entityID}` - Edit/delete SP (returns 404 if `enableSAML` is false)
 3. Reuse existing UI authentication/authorization checks (`allowAdminUI` capability)
 4. Share CSS styling from `ui-style.css`
+5. Pass `EnableSAML` boolean to all templates that use the header template to control navigation display
 
 **SSO Flow Integration**:
 
-1. Extract Entity ID from `AuthnRequest.Issuer.Value`
-2. Lookup in `s.samlServiceProviders` map (O(1) operation)
-3. If not found: return SAML error (Responder/RequestDenied)
-4. Extract ACS URL from `AuthnRequest.AssertionConsumerServiceURL`
-5. Validate ACS URL exists in `sp.ACSURLs` slice
-6. If mismatch: return SAML error (Responder/RequestDenied)
-7. Proceed with normal SSO flow
+1. Check if `s.disableSAMLSPVerification` is enabled - if true, skip verification (development only). Log a warning that it is disabled.
+2. Extract Entity ID from `AuthnRequest.Issuer.Value`
+3. Lookup in `s.samlServiceProviders` map (O(1) operation)
+4. If not found: return SAML error (Responder/RequestDenied)
+5. Extract ACS URL from `AuthnRequest.AssertionConsumerServiceURL`
+6. Validate ACS URL exists in `sp.ACSURLs` slice
+7. If mismatch: return SAML error (Responder/RequestDenied)
+8. Proceed with normal SSO flow
 
 ## Core Requirements
 
@@ -107,7 +121,7 @@ Example JSON structure:
 **Implementation**:
 
 ```go
-// In server/saml_sp.go
+// In server/saml.go
 type SAMLServiceProvider struct {
     EntityID string   `json:"entity_id"` // Unique SP identifier
     Name     string   `json:"name"`      // Display name for admin UI
@@ -129,7 +143,7 @@ type SAMLServiceProvider struct {
 **Implementation**:
 
 ```go
-// In server/saml_sp.go
+// In server/saml.go
 
 // storeSAMLServiceProvidersLocked persists the SP registry to disk
 // Must be called with s.mu held
@@ -139,7 +153,14 @@ func (s *IDPServer) storeSAMLServiceProvidersLocked() error {
     }
 
     path := filepath.Join(s.stateDir, "saml-service-providers.json")
-    data, err := json.MarshalIndent(s.samlServiceProviders, "", "  ")
+
+    // Convert map to array for storage
+    spArray := make([]*SAMLServiceProvider, 0, len(s.samlServiceProviders))
+    for _, sp := range s.samlServiceProviders {
+        spArray = append(spArray, sp)
+    }
+
+    data, err := json.MarshalIndent(spArray, "", "  ")
     if err != nil {
         return fmt.Errorf("marshal SAML SPs: %w", err)
     }
@@ -168,8 +189,15 @@ func loadSAMLServiceProviders(stateDir string) (map[string]*SAMLServiceProvider,
         return nil, fmt.Errorf("read SAML SPs: %w", err)
     }
 
-    if err := json.Unmarshal(data, &sps); err != nil {
+    // Unmarshal from array
+    var spArray []*SAMLServiceProvider
+    if err := json.Unmarshal(data, &spArray); err != nil {
         return nil, fmt.Errorf("unmarshal SAML SPs: %w", err)
+    }
+
+    // Convert array to map keyed by EntityID
+    for _, sp := range spArray {
+        sps[sp.EntityID] = sp
     }
 
     return sps, nil
@@ -207,6 +235,18 @@ func (s *IDPServer) loadState() error {
 // In server/ui_saml.go
 
 func (s *IDPServer) handleSAMLSPList(w http.ResponseWriter, r *http.Request) {
+    // Check if SAML is enabled
+    if !s.enableSAML {
+        var buf bytes.Buffer
+        if err := samlSPListTmpl.Execute(&buf, samlSPListData{SAMLDisabled: true}); err != nil {
+            writeHTTPError(w, r, http.StatusInternalServerError, ecServerError,
+                "failed to render SP list", err)
+            return
+        }
+        buf.WriteTo(w)
+        return
+    }
+
     s.mu.Lock()
     sps := make([]samlSPDisplayData, 0, len(s.samlServiceProviders))
     for _, sp := range s.samlServiceProviders {
@@ -227,7 +267,7 @@ func (s *IDPServer) handleSAMLSPList(w http.ResponseWriter, r *http.Request) {
     })
 
     var buf bytes.Buffer
-    if err := samlSPListTmpl.Execute(&buf, sps); err != nil {
+    if err := samlSPListTmpl.Execute(&buf, samlSPListData{ServiceProviders: sps}); err != nil {
         writeHTTPError(w, r, http.StatusInternalServerError, ecServerError,
             "failed to render SP list", err)
         return
@@ -244,6 +284,11 @@ type samlSPDisplayData struct {
     IsNew    bool
     IsEdit   bool
 }
+
+type samlSPListData struct {
+    ServiceProviders []samlSPDisplayData
+    SAMLDisabled     bool
+}
 ```
 
 **Template** (`server/ui-saml-list.html`):
@@ -253,9 +298,15 @@ type samlSPDisplayData struct {
 
 <h1>SAML Service Providers</h1>
 
+{{if .SAMLDisabled}}
+<div class="info">
+    <p>SAML is currently disabled on this IdP server.</p>
+    <p>To enable SAML, restart the server with the <code>-experimental-enable-saml</code> flag.</p>
+</div>
+{{else}}
 <p><a href="/saml/sp/new" class="button">Register New SP</a></p>
 
-{{if .}}
+{{if .ServiceProviders}}
 <table>
     <thead>
         <tr>
@@ -266,7 +317,7 @@ type samlSPDisplayData struct {
         </tr>
     </thead>
     <tbody>
-        {{range .}}
+        {{range .ServiceProviders}}
         <tr>
             <td>{{.Name}}</td>
             <td><code>{{.EntityID}}</code></td>
@@ -276,7 +327,7 @@ type samlSPDisplayData struct {
                 {{end}}
             </td>
             <td>
-                <a href="/saml/sp/edit/{{urlquery .EntityID}}">Edit</a>
+                <a href="/saml/sp/edit/{{.EntityID | urlquery}}">Edit</a>
             </td>
         </tr>
         {{end}}
@@ -285,6 +336,7 @@ type samlSPDisplayData struct {
 {{else}}
 <p>No SAML service providers registered yet.</p>
 <p><a href="/saml/sp/new">Register your first SP</a></p>
+{{end}}
 {{end}}
 
 </body>
@@ -301,6 +353,13 @@ type samlSPDisplayData struct {
 // In server/ui_saml.go
 
 func (s *IDPServer) handleNewSAMLSP(w http.ResponseWriter, r *http.Request) {
+    // Return 404 if SAML is not enabled
+    if !s.enableSAML {
+        writeHTTPError(w, r, http.StatusNotFound, ecNotFound,
+            "SAML is not enabled", nil)
+        return
+    }
+
     if r.Method == "GET" {
         if err := s.renderSAMLSPForm(w, samlSPDisplayData{IsNew: true}); err != nil {
             writeHTTPError(w, r, http.StatusInternalServerError, ecServerError,
@@ -331,6 +390,10 @@ func (s *IDPServer) handleNewSAMLSP(w http.ResponseWriter, r *http.Request) {
         // Validation
         if entityID == "" {
             s.renderSAMLSPFormError(w, r, baseData, "Entity ID is required")
+            return
+        }
+        if name == "" {
+            s.renderSAMLSPFormError(w, r, baseData, "Name is required")
             return
         }
         if errMsg := validateEntityID(entityID); errMsg != "" {
@@ -390,6 +453,13 @@ func (s *IDPServer) handleNewSAMLSP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *IDPServer) handleEditSAMLSP(w http.ResponseWriter, r *http.Request) {
+    // Return 404 if SAML is not enabled
+    if !s.enableSAML {
+        writeHTTPError(w, r, http.StatusNotFound, ecNotFound,
+            "SAML is not enabled", nil)
+        return
+    }
+
     // Extract Entity ID from URL path
     entityID := strings.TrimPrefix(r.URL.Path, "/saml/sp/edit/")
     entityID, err := url.QueryUnescape(entityID)
@@ -473,6 +543,10 @@ func (s *IDPServer) handleEditSAMLSP(w http.ResponseWriter, r *http.Request) {
         }
 
         // Validation
+        if name == "" {
+            s.renderSAMLSPFormError(w, r, baseData, "Name is required")
+            return
+        }
         if len(acsURLs) == 0 {
             s.renderSAMLSPFormError(w, r, baseData,
                 "At least one ACS URL is required")
@@ -652,67 +726,77 @@ func splitLines(text string) []string {
 func (s *IDPServer) serveSAMLSSO(w http.ResponseWriter, r *http.Request) {
     // ... existing Funnel check and AuthnRequest parsing ...
 
-    // Extract SP Entity ID from AuthnRequest
-    spEntityID := authnRequest.Issuer.Value
-    if spEntityID == "" {
-        s.sendSAMLError(w, "", "", "",
-            "urn:oasis:names:tc:SAML:2.0:status:Requester",
-            "urn:oasis:names:tc:SAML:2.0:status:InvalidNameIDPolicy",
-            "Missing Issuer in AuthnRequest")
-        return
-    }
-
-    // Lookup SP in registry
-    s.mu.Lock()
-    sp, registered := s.samlServiceProviders[spEntityID]
-    s.mu.Unlock()
-
-    if !registered {
-        slog.Warn("SAML SSO: unregistered SP attempted authentication",
-            "entity_id", spEntityID,
-            "remote_addr", r.RemoteAddr)
-        s.sendSAMLError(w, authnRequest.AssertionConsumerServiceURL,
-            authnRequest.ID, relayState,
-            "urn:oasis:names:tc:SAML:2.0:status:Responder",
-            "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
-            "Service Provider not registered")
-        return
-    }
-
-    // Validate ACS URL matches registered URLs
-    acsURL := authnRequest.AssertionConsumerServiceURL
-    if acsURL == "" {
-        s.sendSAMLError(w, "", authnRequest.ID, relayState,
-            "urn:oasis:names:tc:SAML:2.0:status:Requester",
-            "urn:oasis:names:tc:SAML:2.0:status:InvalidNameIDPolicy",
-            "Missing AssertionConsumerServiceURL in AuthnRequest")
-        return
-    }
-
-    validACS := false
-    for _, registeredACS := range sp.ACSURLs {
-        if acsURL == registeredACS {
-            validACS = true
-            break
+    // SP verification can be disabled for development/testing
+    if !s.disableSAMLSPVerification {
+        // Extract SP Entity ID from AuthnRequest
+        spEntityID := authnRequest.Issuer.Value
+        if spEntityID == "" {
+            slog.Warn("SAML SSO: missing Issuer in AuthnRequest",
+                "remote_addr", r.RemoteAddr)
+            s.sendSAMLError(w, "", "", "",
+                "urn:oasis:names:tc:SAML:2.0:status:Requester",
+                "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+                "Missing Issuer in AuthnRequest")
+            return
         }
-    }
 
-    if !validACS {
-        slog.Warn("SAML SSO: ACS URL mismatch",
+        // Lookup SP in registry
+        s.mu.Lock()
+        sp, registered := s.samlServiceProviders[spEntityID]
+        s.mu.Unlock()
+
+        if !registered {
+            slog.Warn("SAML SSO: unregistered SP attempted authentication",
+                "entity_id", spEntityID,
+                "remote_addr", r.RemoteAddr)
+            s.sendSAMLError(w, authnRequest.AssertionConsumerServiceURL,
+                authnRequest.ID, relayState,
+                "urn:oasis:names:tc:SAML:2.0:status:Responder",
+                "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+                "Service Provider not registered")
+            return
+        }
+
+        // Validate ACS URL matches registered URLs
+        acsURL := authnRequest.AssertionConsumerServiceURL
+        if acsURL == "" {
+            slog.Warn("SAML SSO: missing AssertionConsumerServiceURL",
+                "entity_id", spEntityID,
+                "remote_addr", r.RemoteAddr)
+            s.sendSAMLError(w, "", authnRequest.ID, relayState,
+                "urn:oasis:names:tc:SAML:2.0:status:Requester",
+                "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+                "Missing AssertionConsumerServiceURL in AuthnRequest")
+            return
+        }
+
+        validACS := false
+        for _, registeredACS := range sp.ACSURLs {
+            if acsURL == registeredACS {
+                validACS = true
+                break
+            }
+        }
+
+        if !validACS {
+            slog.Warn("SAML SSO: ACS URL mismatch",
+                "entity_id", spEntityID,
+                "requested_acs", acsURL,
+                "registered_acs", sp.ACSURLs)
+            s.sendSAMLError(w, acsURL, authnRequest.ID, relayState,
+                "urn:oasis:names:tc:SAML:2.0:status:Responder",
+                "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
+                "AssertionConsumerServiceURL not registered for this SP")
+            return
+        }
+
+        slog.Info("SAML SSO: validated SP",
             "entity_id", spEntityID,
-            "requested_acs", acsURL,
-            "registered_acs", sp.ACSURLs)
-        s.sendSAMLError(w, acsURL, authnRequest.ID, relayState,
-            "urn:oasis:names:tc:SAML:2.0:status:Responder",
-            "urn:oasis:names:tc:SAML:2.0:status:RequestDenied",
-            "AssertionConsumerServiceURL not registered for this SP")
-        return
+            "sp_name", sp.Name,
+            "acs_url", acsURL)
+    } else {
+        slog.Warn("SAML SSO: SP verification disabled (development mode)")
     }
-
-    slog.Info("SAML SSO: validated SP",
-        "entity_id", spEntityID,
-        "sp_name", sp.Name,
-        "acs_url", acsURL)
 
     // ... continue with existing WhoIs and response generation ...
 }
@@ -767,20 +851,18 @@ func (s *IDPServer) handleUI(w http.ResponseWriter, r *http.Request) {
     }
 
     // SAML SP routes
-    if s.enableSAML {
-        switch r.URL.Path {
-        case "/saml/sp":
-            s.handleSAMLSPList(w, r)
-            return
-        case "/saml/sp/new":
-            s.handleNewSAMLSP(w, r)
-            return
-        }
+    switch r.URL.Path {
+    case "/saml/sp":
+        s.handleSAMLSPList(w, r)
+        return
+    case "/saml/sp/new":
+        s.handleNewSAMLSP(w, r)
+        return
+    }
 
-        if strings.HasPrefix(r.URL.Path, "/saml/sp/edit/") {
-            s.handleEditSAMLSP(w, r)
-            return
-        }
+    if strings.HasPrefix(r.URL.Path, "/saml/sp/edit/") {
+        s.handleEditSAMLSP(w, r)
+        return
     }
 
     writeHTTPError(w, r, http.StatusNotFound, ecNotFound, "not found", nil)
@@ -799,19 +881,19 @@ func (s *IDPServer) handleUI(w http.ResponseWriter, r *http.Request) {
   <body>
     <nav>
       <a href="/">OAuth Clients</a>
-      {{if .EnableSAML}}
       <a href="/saml/sp">SAML SPs</a>
-      {{end}}
     </nav>
   </body>
 </html>
 ```
 
+**Note**: All template data structures that use the header template should include an `EnableSAML bool` field to pass SAML enablement state to templates, though the navigation link is always shown.
+
 ## Testing Strategy
 
 ### Unit Tests
 
-Create `server/saml_sp_test.go`:
+Add to `server/saml_test.go`:
 
 ```go
 func TestValidateEntityID(t *testing.T) {
@@ -898,7 +980,7 @@ func TestStorageRoundTrip(t *testing.T) {
 
 ### Integration Tests
 
-Create `server/saml_sp_integration_test.go`:
+Add to `server/saml_test.go`:
 
 ```go
 func TestSAMLSPRegistryIntegration(t *testing.T) {
@@ -987,13 +1069,50 @@ func TestSAMLSSOValidation(t *testing.T) {
             srv.serveSAMLSSO(rec, req)
 
             // Parse response and check status
-            // (implementation depends on your SAML response parsing)
             status := extractSAMLStatus(rec.Body.String())
             if !strings.Contains(status, tt.wantStatus) {
                 t.Errorf("got status %s, want %s", status, tt.wantStatus)
             }
         })
     }
+}
+
+// Helper function to create a test AuthnRequest with specified entity ID and ACS URL
+func createTestAuthnRequest(entityID, acsURL string) *saml.AuthnRequest {
+    return &saml.AuthnRequest{
+        ID: "test_" + uuid.New().String(),
+        Issuer: &saml.Issuer{
+            Value: entityID,
+        },
+        AssertionConsumerServiceURL: acsURL,
+    }
+}
+
+// Helper function to encode an AuthnRequest for use in URL parameters
+func encodeAuthnRequest(req *saml.AuthnRequest) string {
+    // Marshal to XML
+    xmlBytes, _ := xml.Marshal(req)
+
+    // Deflate compress
+    var b bytes.Buffer
+    w, _ := flate.NewWriter(&b, flate.DefaultCompression)
+    w.Write(xmlBytes)
+    w.Close()
+
+    // Base64 encode
+    return base64.StdEncoding.EncodeToString(b.Bytes())
+}
+
+// Helper function to extract SAML status from response HTML/XML
+func extractSAMLStatus(body string) string {
+    // This is a simplified parser - adjust based on actual response format
+    if strings.Contains(body, "urn:oasis:names:tc:SAML:2.0:status:Success") {
+        return "Success"
+    }
+    if strings.Contains(body, "urn:oasis:names:tc:SAML:2.0:status:RequestDenied") {
+        return "RequestDenied"
+    }
+    return "Unknown"
 }
 ```
 
@@ -1017,31 +1136,49 @@ func TestSAMLSSOValidation(t *testing.T) {
      - ACS URLs: http://localhost:58080/saml/acs
    - Submit form
 
-4. **Verify with verifier-saml**:
+4. **Test with registered SP using verifier-saml**:
 
    ```bash
    go run cmd/verifier-saml/verifier-saml.go \
      -v \
+     -sp-entity-id http://localhost:58080/saml \
      -idp-metadata-url https://test-idp.your-tailnet.ts.net/saml/metadata
    ```
 
-5. **Test SSO flow**: Follow browser link from verifier-saml
+   - Follow browser link from verifier-saml
+   - Verify successful authentication
 
-6. **Test validation**:
-   - Try SSO with unregistered SP (should fail with RequestDenied)
-   - Try SSO with mismatched ACS URL (should fail)
-   - Edit SP to remove ACS URL, verify existing sessions reject
+5. **Test validation with unregistered SP**:
+
+   ```bash
+   go run cmd/verifier-saml/verifier-saml.go \
+     -v \
+     -sp-entity-id http://localhost:58080/unregistered-sp \
+     -idp-metadata-url https://test-idp.your-tailnet.ts.net/saml/metadata
+   ```
+
+   - Follow browser link
+   - Verify RequestDenied error response
+
+6. **Test validation with mismatched ACS URL**:
+   - Edit SP in admin UI to change ACS URL to something different
+   - Try SSO with verifier-saml using original entity ID
+   - Verify RequestDenied error for ACS URL mismatch
 
 ## Implementation Checklist
 
 ### Phase 1: Data Model & Storage
 
-- [ ] Create `server/saml_sp.go` with `SAMLServiceProvider` struct
-- [ ] Implement `storeSAMLServiceProvidersLocked()`
-- [ ] Implement `loadSAMLServiceProviders()`
+- [ ] Add `SAMLServiceProvider` struct to `server/saml.go`
+- [ ] Implement `storeSAMLServiceProvidersLocked()` in `server/saml.go`
+- [ ] Implement `loadSAMLServiceProviders()` in `server/saml.go`
 - [ ] Add `samlServiceProviders map[string]*SAMLServiceProvider` to IDPServer
+- [ ] Add `disableSAMLSPVerification bool` to IDPServer
+- [ ] Add `-experimental-disable-saml-sp-verification` flag to `tsidp-server.go`
+- [ ] Update `scripts/docker/run.sh` to support `TSIDP_EXPERIMENTAL_DISABLE_SAML_SP_VERIFICATION` env var
+- [ ] Update `README.md` to document new flag and environment variable
 - [ ] Update `loadState()` to load SP registry on startup
-- [ ] Write unit tests for storage round-trip
+- [ ] Write unit tests for storage round-trip in `server/saml_test.go`
 
 ### Phase 2: Admin UI Templates
 
@@ -1057,7 +1194,7 @@ func TestSAMLSSOValidation(t *testing.T) {
 - [ ] Implement `handleSAMLSPList()`
 - [ ] Implement `handleNewSAMLSP()` (GET and POST)
 - [ ] Implement `handleEditSAMLSP()` (GET, POST update, POST delete)
-- [ ] Implement validation helpers: `validateEntityID()`, `validateACSURL()`, `splitLines()`
+- [ ] Implement validation helpers: `validateEntityID()` (with empty name check), `validateACSURL()`, `splitLines()`
 - [ ] Implement form rendering helpers
 
 ### Phase 4: Route Registration
@@ -1069,11 +1206,13 @@ func TestSAMLSSOValidation(t *testing.T) {
 ### Phase 5: SSO Flow Integration
 
 - [ ] Update `serveSAMLSSO()` in `server/saml.go`:
+  - [ ] Add check for `disableSAMLSPVerification` flag
   - [ ] Add SP Entity ID lookup
   - [ ] Add ACS URL validation
-  - [ ] Add appropriate SAML error responses
-  - [ ] Add logging for security events
-- [ ] Write integration tests for SSO validation
+  - [ ] Add appropriate SAML error responses (use RequestDenied status)
+  - [ ] Add slog.Warn logging for all SP verification failures
+- [ ] Write integration tests for SSO validation in `server/saml_test.go`
+- [ ] Add test helper functions: `createTestAuthnRequest()`, `encodeAuthnRequest()`, `extractSAMLStatus()`
 
 ### Phase 6: Testing & Documentation
 
@@ -1082,21 +1221,20 @@ func TestSAMLSSOValidation(t *testing.T) {
 - [ ] Write integration tests for UI handlers
 - [ ] Write integration tests for SSO validation
 - [ ] Manual testing with verifier-saml
-- [ ] Update main README with SP registry documentation
 
 ## Success Criteria
 
 The SP registry implementation is complete when:
 
 1. ✅ SPs can be registered via admin UI with Entity ID and ACS URLs
-2. ✅ SPs are persisted to `saml-service-providers.json`
+2. ✅ SPs are persisted to `saml-service-providers.json` in stateDir
 3. ✅ SP list displays all registered SPs with proper formatting
 4. ✅ SP edit/delete functionality works correctly
 5. ✅ SSO flow validates Entity ID against registry
 6. ✅ SSO flow validates ACS URL against registered URLs
 7. ✅ Unregistered SPs receive RequestDenied SAML error
 8. ✅ Invalid ACS URLs receive RequestDenied SAML error
-9. ✅ Security events are logged (unauthorized SP attempts)
+9. ✅ All SP verification failures are logged with slog.Warn including context (entity_id, remote_addr, etc.)
 10. ✅ All unit and integration tests pass
 11. ✅ verifier-saml successfully authenticates with registered SP
 12. ✅ verifier-saml fails authentication when SP is not registered
