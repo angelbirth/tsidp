@@ -264,6 +264,14 @@ Redirect URI validation now implements OAuth 2.0 Security Best Practices:
 - ✅ `http://localhost:8080/callback` - Localhost development
 - ✅ `http://127.0.0.1:8080/callback` - Loopback IPv4
 - ✅ `http://[::1]:8080/callback` - Loopback IPv6
+- ✅ `http://100.64.1.5:8080/callback` - Tailscale CGNAT IPv4 (100.64.0.0/10)
+- ✅ `http://[fd7a:115c:a1e0::1]:8080/callback` - Tailscale IPv6
+- ✅ `http://proxmox.tail-net.ts.net/callback` - Tailscale MagicDNS
+
+**Rationale for Tailscale HTTP support**:
+Tailscale traffic is **encrypted via WireGuard**, making HTTP within the Tailscale network
+as secure as HTTPS. This allows OAuth flows with internal services (Proxmox, Synology, etc.)
+without requiring TLS certificates for every device.
 
 Tests updated to verify security posture in `security_validation_test.go`.
 

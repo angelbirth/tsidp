@@ -381,22 +381,57 @@ func validateRedirectURI(redirectURI string) string {
 			return "HTTPS URLs must have a host"
 		}
 	case "http":
-		// HTTP only allowed for localhost/loopback (per RFC 8252 section 7.3)
+		// HTTP allowed for localhost/loopback (per RFC 8252 section 7.3) and Tailscale networks
 		if u.Host == "" {
 			return "HTTP URLs must have a host"
 		}
 		host := strings.ToLower(u.Host)
-		// Check for localhost and loopback addresses
-		if !strings.HasPrefix(host, "localhost:") &&
-		   !strings.HasPrefix(host, "localhost") &&
-		   !strings.HasPrefix(host, "127.") &&
-		   !strings.HasPrefix(host, "[::1]") {
-			return "HTTP URLs only allowed for localhost/loopback addresses"
+		// Remove port for checking
+		hostWithoutPort := host
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			hostWithoutPort = host[:idx]
 		}
+
+		// Check for localhost and loopback addresses
+		if strings.HasPrefix(host, "localhost:") ||
+		   host == "localhost" ||
+		   strings.HasPrefix(hostWithoutPort, "127.") ||
+		   strings.HasPrefix(host, "[::1]") {
+			return ""
+		}
+
+		// Check for Tailscale CGNAT range (100.64.0.0/10)
+		if strings.HasPrefix(hostWithoutPort, "100.") {
+			parts := strings.Split(hostWithoutPort, ".")
+			if len(parts) >= 2 {
+				// 100.64.0.0 to 100.127.255.255
+				if parts[0] == "100" {
+					// Parse second octet to check range
+					var secondOctet int
+					if _, err := fmt.Sscanf(parts[1], "%d", &secondOctet); err == nil {
+						if secondOctet >= 64 && secondOctet <= 127 {
+							return ""
+						}
+					}
+				}
+			}
+		}
+
+		// Check for Tailscale IPv6 range (fd7a:115c:a1e0::/48)
+		if strings.HasPrefix(hostWithoutPort, "[fd7a:115c:a1e0:") {
+			return ""
+		}
+
+		// Check for Tailscale MagicDNS (.ts.net domains)
+		if strings.HasSuffix(hostWithoutPort, ".ts.net") {
+			return ""
+		}
+
+		return "HTTP URLs only allowed for localhost, loopback, or Tailscale addresses"
 	default:
 		// Reject dangerous schemes: javascript:, data:, vbscript:, file:, etc.
 		// Only custom app schemes would be allowed here, and we're being strict
-		return fmt.Sprintf("unsupported URI scheme %q (only https and http://localhost allowed)", scheme)
+		return fmt.Sprintf("unsupported URI scheme %q (only https and http for localhost/Tailscale allowed)", scheme)
 	}
 
 	return ""

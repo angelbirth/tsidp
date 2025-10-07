@@ -53,6 +53,30 @@ func TestRedirectURI_Validation(t *testing.T) {
 			reason:    "Loopback HTTP allowed for development",
 		},
 		{
+			name:      "Valid_HTTP_Tailscale_CGNAT_IPv4",
+			uri:       "http://100.64.1.5:8080/callback",
+			wantValid: true,
+			reason:    "Tailscale CGNAT range (100.64.0.0/10) - encrypted via WireGuard",
+		},
+		{
+			name:      "Valid_HTTP_Tailscale_IPv6",
+			uri:       "http://[fd7a:115c:a1e0::1]:8080/callback",
+			wantValid: true,
+			reason:    "Tailscale IPv6 range - encrypted via WireGuard",
+		},
+		{
+			name:      "Valid_HTTP_Tailscale_MagicDNS",
+			uri:       "http://proxmox.tail-net.ts.net/callback",
+			wantValid: true,
+			reason:    "Tailscale MagicDNS - encrypted via WireGuard",
+		},
+		{
+			name:      "Valid_HTTP_Tailscale_MagicDNS_WithPort",
+			uri:       "http://synology.my-network.ts.net:5000/callback",
+			wantValid: true,
+			reason:    "Tailscale MagicDNS with port - encrypted via WireGuard",
+		},
+		{
 			name:      "Blocked_CustomScheme_Mobile",
 			uri:       "com.example.myapp://callback",
 			wantValid: false,
@@ -97,6 +121,18 @@ func TestRedirectURI_Validation(t *testing.T) {
 			uri:       "http://example.com/callback",
 			wantValid: false,
 			reason:    "HTTP non-localhost blocked per RFC 8252",
+		},
+		{
+			name:      "Blocked_HTTP_100_OutsideCGNAT",
+			uri:       "http://100.50.1.1/callback",
+			wantValid: false,
+			reason:    "100.x outside CGNAT range (100.64-127) blocked",
+		},
+		{
+			name:      "Blocked_HTTP_100_AboveCGNAT",
+			uri:       "http://100.128.1.1/callback",
+			wantValid: false,
+			reason:    "100.128+ outside CGNAT range blocked",
 		},
 		{
 			name:      "Blocked_DataURI_XSS",

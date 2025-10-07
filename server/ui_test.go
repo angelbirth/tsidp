@@ -55,17 +55,17 @@ func TestValidateRedirectURI(t *testing.T) {
 		{
 			name: "blocked mobile app scheme",
 			uri:  "myapp://auth/callback",
-			want: `unsupported URI scheme "myapp" (only https and http://localhost allowed)`,
+			want: `unsupported URI scheme "myapp" (only https and http for localhost/Tailscale allowed)`,
 		},
 		{
 			name: "blocked custom scheme with subdomain",
 			uri:  "com.example.app://callback",
-			want: `unsupported URI scheme "com.example.app" (only https and http://localhost allowed)`,
+			want: `unsupported URI scheme "com.example.app" (only https and http for localhost/Tailscale allowed)`,
 		},
 		{
 			name: "blocked scheme with path and query",
 			uri:  "myapp://auth/callback?state=123",
-			want: `unsupported URI scheme "myapp" (only https and http://localhost allowed)`,
+			want: `unsupported URI scheme "myapp" (only https and http for localhost/Tailscale allowed)`,
 		},
 		{
 			name: "missing scheme",
@@ -95,7 +95,7 @@ func TestValidateRedirectURI(t *testing.T) {
 		{
 			name: "custom scheme blocked even without host",
 			uri:  "myapp:///callback",
-			want: `unsupported URI scheme "myapp" (only https and http://localhost allowed)`,
+			want: `unsupported URI scheme "myapp" (only https and http for localhost/Tailscale allowed)`,
 		},
 	}
 
