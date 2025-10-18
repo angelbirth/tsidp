@@ -41,10 +41,11 @@
       formatter = eachSystem (pkgs: pkgs.nixfmt-tree);
 
       packages = eachSystem (pkgs: {
-        default = pkgs.buildGo124Module {
+        tsidp = pkgs.buildGo124Module {
           pname = "tsidp";
           version = if (self ? shortRev) then self.shortRev else "dev";
           src = pkgs.nix-gitignore.gitignoreSource [ ] ./.;
+          meta.mainProgram = "tsidp";
           ldflags =
             let
               tsVersion =
@@ -58,6 +59,21 @@
               "-X tailscale.com/version.shortStamp=${tsVersion}"
             ];
           vendorHash = "sha256-obtcJTg7V4ij3fGVmZMD7QQwKJX6K5PPslpM1XKCk9Q="; # SHA based on vendoring go.mod
+        };
+
+        default = self.packages.${pkgs.system}.tsidp;
+      });
+
+      overlays.default = final: prev: {
+        tsidp = self.packages.${final.system}.tsidp;
+      };
+
+      devShells = eachSystem (pkgs: {
+        default = pkgs.mkShell {
+          packages = [
+            pkgs.go_1_24
+            pkgs.gopls
+          ];
         };
       });
 
@@ -76,12 +92,9 @@
             mkOption
             mkPackageOption
             optional
-            optionalString
             ;
           inherit (lib.types)
-            path
             str
-            submodule
             port
             bool
             enum
@@ -89,114 +102,110 @@
             ;
 
           cfg = config.services.tsidp;
+
+          stateDir = "/var/lib/tsidp";
         in
         {
           options.services.tsidp = {
             enable = mkEnableOption "tsidp server";
 
-            package = mkPackageOption pkgs "tsidp" { };
+            package = mkOption {
+              type = lib.types.package;
+              default = self.packages.${pkgs.system}.tsidp;
+              description = "Package to use for the tsidp service.";
+            };
 
             environmentFile = mkOption {
-              type = nullOr path;
+              type = nullOr lib.types.path;
               description = ''
                 Path to an environment file loaded for the tsidp service.
 
                 This can be used to securely store tokens and secrets outside of the world-readable Nix store.
 
                 Example contents of the file:
+                ```
                 TS_AUTH_KEY=YOUR_TAILSCALE_AUTHKEY
+                ```
               '';
               default = null;
               example = "/run/secrets/tsidp";
             };
 
-            settings = mkOption {
-              type = submodule {
-                options = {
-                  hostName = mkOption {
-                    type = str;
-                    default = "idp";
-                    description = ''
-                      The hostname to use for the tsnet node.
-                    '';
-                  };
-
-                  port = mkOption {
-                    type = port;
-                    default = 443;
-                    description = ''
-                      Port to listen on (default: 443).
-                    '';
-                  };
-
-                  localPort = mkOption {
-                    type = nullOr port;
-                    default = null;
-                    description = "Listen on localhost:<port>.";
-                  };
-
-                  useLocalTailscaled = mkOption {
-                    type = bool;
-                    description = ''
-                      Use local tailscaled instead of tsnet.
-                    '';
-                    default = false;
-                  };
-
-                  enableFunnel = mkOption {
-                    type = bool;
-                    default = false;
-                    description = ''
-                      Use Tailscale Funnel to make tsidp available on the public internet so it works with SaaS products.
-                    '';
-                  };
-
-                  enableSts = mkOption {
-                    type = bool;
-                    default = true;
-                    description = ''
-                      Enable OAuth token exchange using RFC 8693.
-                    '';
-                  };
-
-                  logLevel = mkOption {
-                    type = enum [
-                      "debug"
-                      "info"
-                      "warn"
-                      "error"
-                    ];
-                    description = ''
-                      Set logging level: debug, info, warn, error.
-                    '';
-                    default = "info";
-                  };
-
-                  debugAllRequests = mkOption {
-                    type = bool;
-                    description = ''
-                      For development. Prints all requests and responses.
-                    '';
-                    default = false;
-                  };
-
-                  debugTsnet = mkOption {
-                    type = bool;
-                    description = ''
-                      For development. Enables debug level logging with tsnet connection.
-                    '';
-                    default = false;
-                  };
-                };
+            settings = {
+              hostName = mkOption {
+                type = str;
+                default = "idp";
+                description = ''
+                  The hostname to use for the tsnet node.
+                '';
               };
 
-              default = { };
+              port = mkOption {
+                type = port;
+                default = 443;
+                description = ''
+                  Port to listen on (default: 443).
+                '';
+              };
 
-              description = ''
-                Environment variables that will be passed to tsidp, see
-                [configuration options](https://github.com/tailscale/tsidp#tsidp-configuration-options)
-                for supported values.
-              '';
+              localPort = mkOption {
+                type = nullOr port;
+                default = null;
+                description = "Listen on localhost:<port>.";
+              };
+
+              useLocalTailscaled = mkOption {
+                type = bool;
+                description = ''
+                  Use local tailscaled instead of tsnet.
+                '';
+                default = false;
+              };
+
+              enableFunnel = mkOption {
+                type = bool;
+                default = false;
+                description = ''
+                  Use Tailscale Funnel to make tsidp available on the public internet so it works with SaaS products.
+                '';
+              };
+
+              enableSts = mkOption {
+                type = bool;
+                default = true;
+                description = ''
+                  Enable OAuth token exchange using RFC 8693.
+                '';
+              };
+
+              logLevel = mkOption {
+                type = enum [
+                  "debug"
+                  "info"
+                  "warn"
+                  "error"
+                ];
+                description = ''
+                  Set logging level: debug, info, warn, error.
+                '';
+                default = "info";
+              };
+
+              debugAllRequests = mkOption {
+                type = bool;
+                description = ''
+                  For development. Prints all requests and responses.
+                '';
+                default = false;
+              };
+
+              debugTsnet = mkOption {
+                type = bool;
+                description = ''
+                  For development. Enables debug level logging with tsnet connection.
+                '';
+                default = false;
+              };
             };
           };
 
@@ -229,32 +238,36 @@
                 ];
 
                 environment = {
-                  HOME = "/var/lib/tsidp";
+                  HOME = stateDir;
                   TAILSCALE_USE_WIP_CODE = "1"; # Needed while tsidp is in development (< v1.0.0).
                 };
 
                 serviceConfig = {
                   Type = "simple";
-                  ExecStart = ''
-                    ${getExe cfg.package} \
-                      ${optionalString (cfg.settings.hostName != "idp") "-hostname=${cfg.hostName}"} \
-                      ${optionalString (cfg.settings.port != 443) "-port=${toString cfg.port}"} \
-                      ${optionalString (cfg.settings.localPort != null) "-local-port=${cfg.localPort}"} \
-                      ${optionalString (cfg.settings.useLocalTailscaled) "-use-local-tailscaled"} \
-                      ${optionalString (cfg.settings.enableFunnel) "-funnel"} \
-                      ${optionalString (cfg.settings.enableSts) "-enable-sts"} \
-                      ${optionalString (cfg.settings.logLevel != "info") "-log=${cfg.logLevel}"} \
-                      ${optionalString (cfg.settings.debugAllRequests) "-debug-all-requests"} \
-                      ${optionalString (cfg.settings.debugTsnet) "-debug-tsnet"}
-                  '';
+                  ExecStart =
+                    let
+                      args = lib.cli.toGNUCommandLineShell { mkOptionName = k: "-${k}"; } {
+                        hostname = cfg.settings.hostName;
+                        port = cfg.settings.port;
+                        local-port = cfg.settings.localPort;
+                        use-local-tailscaled = cfg.settings.useLocalTailscaled;
+                        funnel = cfg.settings.enableFunnel;
+                        enable-sts = cfg.settings.enableSts;
+                        log = cfg.settings.logLevel;
+                        debug-all-requests = cfg.settings.debugAllRequests;
+                        debug-tsnet = cfg.settings.debugTsnet;
+                        dir = stateDir;
+                      };
+                    in
+                    "${getExe cfg.package} ${args}";
                   Restart = "always";
                   RestartSec = "15";
 
                   DynamicUser = true;
-                  StateDirectory = "tsidp";
-                  WorkingDirectory = "/var/lib/tsidp";
+                  StateDirectory = baseNameOf stateDir;
+                  WorkingDirectory = stateDir;
                   ReadWritePaths = mkIf (cfg.settings.useLocalTailscaled) [
-                    "/var/run/tailscale"
+                    "/var/run/tailscale" # needed due to `ProtectSystem = "strict";`
                     "/var/lib/tailscale"
                   ];
                   BindPaths = mkIf (cfg.settings.useLocalTailscaled) [
