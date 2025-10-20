@@ -34,6 +34,12 @@ import (
 	"tailscale.com/util/mak"
 )
 
+// LocalClient is an interface for Tailscale local API client operations.
+// This interface allows for testing with mock implementations.
+type LocalClient interface {
+	WhoIs(ctx context.Context, addr string) (*apitype.WhoIsResponse, error)
+}
+
 // CtxConn is a key to look up a net.Conn stored in an HTTP request's context.
 // Migrated from legacy/tsidp.go:58
 type CtxConn struct{}
@@ -41,7 +47,7 @@ type CtxConn struct{}
 // IDPServer handles OIDC identity provider operations
 // Migrated from legacy/tsidp.go:306-323
 type IDPServer struct {
-	lc          *local.Client
+	lc          LocalClient
 	loopbackURL string
 	hostname    string // "foo.bar.ts.net"
 	serverURL   string // "https://foo.bar.ts.net"
@@ -53,6 +59,8 @@ type IDPServer struct {
 	lazyMux        lazy.SyncValue[*http.ServeMux]
 	lazySigningKey lazy.SyncValue[*signingKey]
 	lazySigner     lazy.SyncValue[jose.Signer]
+
+	rateLimiter *RateLimiter // optional rate limiter for DOS protection
 
 	mu            sync.Mutex               // guards the fields below
 	code          map[string]*AuthRequest  // keyed by random hex
@@ -164,7 +172,7 @@ const (
 )
 
 // New creates a new IDPServer instance
-func New(lc *local.Client, stateDir string, funnel, localTSMode, enableSTS bool) *IDPServer {
+func New(lc LocalClient, stateDir string, funnel, localTSMode, enableSTS bool) *IDPServer {
 	return &IDPServer{
 		lc:            lc,
 		stateDir:      stateDir,
@@ -196,6 +204,11 @@ func (s *IDPServer) ServerURL() string {
 // SetLoopbackURL sets the loopback URL
 func (s *IDPServer) SetLoopbackURL(url string) {
 	s.loopbackURL = url
+}
+
+// SetRateLimiter configures rate limiting for the server
+func (s *IDPServer) SetRateLimiter(config RateLimitConfig) {
+	s.rateLimiter = NewRateLimiter(config)
 }
 
 // CleanupExpiredTokens removes expired tokens from memory
@@ -238,35 +251,37 @@ func (s *IDPServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // Migrated from legacy/tsidp.go:674-687
 func (s *IDPServer) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	// Register .well-known handlers
+	// Register .well-known handlers (no rate limiting - these are cached)
 	mux.HandleFunc("/.well-known/jwks.json", s.serveJWKS)
 	mux.HandleFunc("/.well-known/openid-configuration", s.serveOpenIDConfig)
 	mux.HandleFunc("/.well-known/oauth-authorization-server", s.serveOAuthMetadata)
 
-	// Register /authorize endpoint
+	// Register /authorize endpoint with rate limiting
 	// Migrated from legacy/tsidp.go:679
-	mux.HandleFunc("/authorize", s.serveAuthorize)
+	mux.HandleFunc("/authorize", s.RateLimitMiddleware(s.serveAuthorize))
 
-	// Register /clients/ endpoint
+	// Register /clients/ endpoint (no rate limiting - protected by app capability)
 	// Migrated from legacy/tsidp.go:684
 	mux.HandleFunc("/clients/", s.addGrantAccessContext(s.serveClients))
 
-	// Register /token endpoint
+	// Register /token endpoint with rate limiting (most critical)
 	// Migrated from legacy/tsidp.go:681
-	mux.HandleFunc("/token", s.serveToken)
+	mux.HandleFunc("/token", s.RateLimitMiddleware(s.serveToken))
 
-	// Register /introspect endpoint
+	// Register /introspect endpoint with rate limiting
 	// Migrated from legacy/tsidp.go:682
-	mux.HandleFunc("/introspect", s.serveIntrospect)
+	mux.HandleFunc("/introspect", s.RateLimitMiddleware(s.serveIntrospect))
 
-	// Register /userinfo endpoint
+	// Register /userinfo endpoint with rate limiting
 	// Migrated from legacy/tsidp.go:680
-	mux.HandleFunc("/userinfo", s.serveUserInfo)
+	mux.HandleFunc("/userinfo", s.RateLimitMiddleware(s.serveUserInfo))
 
 	// Register /register endpoint for Dynamic Client Registration
+	// Protected by app capability, no rate limiting needed
 	mux.HandleFunc("/register", s.addGrantAccessContext(s.serveDynamicClientRegistration))
 
 	// Register UI handler - must be last as it handles "/"
+	// Protected by app capability, no rate limiting needed
 	// Migrated from legacy/tsidp.go:685
 	mux.HandleFunc("/", s.addGrantAccessContext(s.handleUI))
 	return mux

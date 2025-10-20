@@ -64,11 +64,9 @@ func TestAuthorizationCodeReplay(t *testing.T) {
 // TestLocalhostAccess verifies localhost bypass behavior for development
 // This is intentional for -local-port development mode
 func TestLocalhostAccess(t *testing.T) {
-	t.Run("with_local_client_set", func(t *testing.T) {
-		// When lc is not nil (normal operation), localhost gets full access
+	t.Run("without_local_client", func(t *testing.T) {
+		// When lc is nil, localhost should get default-deny (no access)
 		s := newTestServer(t)
-		// lc is nil by default in test, so we create a mock one
-		// Actually, we'll test the bypass check directly since we can't easily mock lc
 
 		handler := s.addGrantAccessContext(func(w http.ResponseWriter, r *http.Request) {
 			access, ok := r.Context().Value(appCapCtxKey).(*accessGrantedRules)
